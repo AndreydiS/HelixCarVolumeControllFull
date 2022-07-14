@@ -154,17 +154,17 @@ MCP_CAN CAN(pinCANShield);
 Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 /* standard canId, in case we need only 1(or 2 canIDs)
-    CAN.init_Mask(0, 0, 0x07ff); //bin ‭111 1111 1111 //1fffffff   
+    CAN.init_Mask(0, 0, 0x07ff); //bin‭111 1111 1111 //1fffffff   
     CAN.init_Filt(0, 0, 0x740); //canid1
     CAN.init_Filt(1, 0, 0x4c0); //canid2
 
-    CAN.init_Mask(1, 1, 0x1fffffff); //bin ‭111 1111 1111‬    //   
+    CAN.init_Mask(1, 1, 0x1fffffff); //bin‭111 1111 1111
     CAN.init_Filt(2, 1, 0x17330b10);  //extcanid1
     CAN.init_Filt(3, 1, 0x17330a10);  //extcanid2
     CAN.init_Filt(4, 1, 0x17330a10);  //extcanid3
     CAN.init_Filt(5, 1, 0x17330a10);  //extcanid4
 
-    CAN.init_Mask(0, 0, 0x0700); //bin ‭ 111 0000 0000‬
+    CAN.init_Mask(0, 0, 0x0700); //bin111 0000 0000‬
     CAN.init_Filt(0, 0, 0x700);  //all canids 0x7**
 */
 
