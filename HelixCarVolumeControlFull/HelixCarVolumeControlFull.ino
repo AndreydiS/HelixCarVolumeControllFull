@@ -1,9 +1,9 @@
-/*ver 0.921
+/*ver 0.922
   to do:
     - standartize encoder - DONE
     - add delay for volume by CAN
-    - add menu
-      - save default vol and bass levels to power independed mem
+    - add menu DONE
+      - save default vol and bass levels to power independed mem DONE
       - can sniffing when R is not detected
       - can sniffing when Vol is not detected
       
@@ -111,9 +111,16 @@ char menuOledBri[] = "Disp. bri.";
 char menuOledVolBarType[] = "Volume Bar Type";
 char menuOledVolCtrlBy[] = "Volume Ctrl By";
 char menuOledSaveDefaults[] = "Save Defaults";
-char * arrMenuOled[] = {menuOledBri, menuOledVolBarType, menuOledVolCtrlBy, menuOledSaveDefaults};
+char menuOledSniffingCANGear[] = "Sniffing CAN Gear";
+char menuOledSniffingCANVol[] = "Sniffing CAN Vol";
+
+
+char * arrMenuOled[] = {menuOledBri, menuOledVolBarType, menuOledVolCtrlBy, menuOledSaveDefaults, menuOledSniffingCANGear, menuOledSniffingCANVol};
+//char * arrMenuOled[] = {menuOledBri, menuOledVolBarType, menuOledVolCtrlBy, menuOledSaveDefaults};
 //char * arrMenuOled[] = {menuOledBri, menuOledVolBarType, menuOledSaveDefaults};
-#define MenuOledItems 2 //0 1 2
+#define MenuOledItems 5 // starting from 0
+#define MaxMenuOledItems 5 //starting from 0. Number of menu items on one screen
+
 
 char menuOledSubHi[] = "Hi";
 char menuOledSubMid[] = "Mid";
@@ -160,28 +167,32 @@ void PinB(){
 #define TFT_CS    A0     // TFT CS  
 //#define tftColorBack ST77XX_BLACK
 #define posTFTSerial 120
-#define lblVol "Vol:"
+//#define lblVol "Vol:"
+#define lblVol "V"
 #define posVolLblX 0
-#define posVolLblY 5
-#define posVolLvlX 50
-#define posVolLvlY 5
-#define posVolBarX 0
-#define posVolBarY 24
-#define posVolBarH 14
-#define widthVolBar 240.0
+#define posVolLblY 0//5
+#define posVolLvlX 199 //50
+#define posVolLvlY 0//5
+#define posVolBarX 25//0
+#define posVolBarY 0//24
+#define posVolBarH 24//14
+#define widthVolBar 170 //240.0
+#define sizeTextLbl 3 //2 each symbol =10px + 2px space; 3 15px +3px space
 
-#define lblBass "Bass:"
+//#define lblBass "Bass:"
+#define lblBass "B"
 #define posBassLblX 0
-#define posBassLblY 43
-#define posBassLvlX 62
-#define posBassLvlY 43
-#define posBassBarX 0
-#define posBassBarY 62
+#define posBassLblY 38//43
+#define posBassLvlX 199 //62
+#define posBassLvlY 38//43
+#define posBassBarX 25//0
+#define posBassBarY 38//43//62
 
+#define lblDigIn "Dig In:"
 #define posDigInLblX 0
-#define posDigInLblY 82
-#define posDigInLvlX 170
-#define posDigInLvlY 82
+#define posDigInLblY 76//82
+#define posDigInLvlX 124//150
+#define posDigInLvlY 76//82
 
 uint16_t colorVolBar = ST77XX_YELLOW;
 uint16_t colorBassBar = ST77XX_YELLOW;
@@ -190,11 +201,24 @@ byte intVolBarWidth = 0;
 
 
 INT32U canId = 0x0;
-unsigned char len = 0;
-unsigned char buf[8];
+//unsigned char len = 0;
+byte len = 0;
+//unsigned char buf[8];
+byte buf[8];
 MCP_CAN CAN(pinCANShield);
 
-//Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
+bool blnSnifCANGear = false;
+bool blnSnifCANVol = false;
+byte bytSnifCANGear = 0x0;
+byte bytSnifCANGearOld = 0x0;
+byte bytSnifCANVol = 0x0;
+byte bytSnifCANVolOld = 0x0;
+byte bytSnifCANVol2 = 0x0;
+byte bytSnifCANVolOld2 = 0x0;
+
+
+byte bytVisualType=0;
+
 Adafruit_ST7789 display = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_RST);
 
 /* standard canId, in case we need only 1(or 2 canIDs)
@@ -217,7 +241,7 @@ void setup() {
   Serial.println("boot");
   pinMode(pinDigPot, OUTPUT);
   pinMode(pinDigital, OUTPUT);
-
+  blnRefreshDisplay = true;
   //encoder start
   pinMode(pinEncA, INPUT_PULLUP); 
   pinMode(pinEncB, INPUT_PULLUP); 
@@ -236,6 +260,18 @@ void setup() {
   //attachInterrupt(0,int0,CHANGE);
   //attachInterrupt(1,int1,CHANGE);
 
+  blnBass = EEPROM.read(eepromAddrBlnBass);
+  lvlBass = EEPROM.read(eepromAddrLvlBass);
+  if (lvlBass > maxLevel) lvlBass=80;
+  lvlVol = EEPROM.read(eepromAddrLvlVol);
+  if (lvlVol > maxLevel) lvlVol=60;
+  bytDisplayBri = EEPROM.read(eepromAddrBri);
+  if (bytDisplayBri > MenuOledSubBriItems) bytDisplayBri=3;
+  bytVisualType = EEPROM.read(eepromAddrBarType);
+  if (bytVisualType>MenuOledSubVolBarTypeItems) {bytVisualType=0;}
+  bytVolBy = EEPROM.read(eepromAddrVolBy);
+  if (bytVolBy>MenuOledSubVolBy) {bytVolBy=0;}
+  
 
   SPI.begin();
   digitalPotWrite(lvlVol,addrVol); //set wiper to default
@@ -243,19 +279,8 @@ void setup() {
   delay(100);
   display.init(240, 240);    //display.init(240, 240, SPI_MODE2);    // Init ST7789 display 240x240 pixel
   display.setRotation(2);// if the screen is flipped, remove this command
-  display.fillScreen(ST77XX_BLACK);
-  display.setTextColor(ST77XX_WHITE,ST77XX_BLACK);
-  display.setTextSize(2);
-  display.setCursor(posVolLblX, posVolLblY);
-  display.print(lblVol);
-  display.setCursor(posBassLblX, posBassLblY);
-  display.print(lblBass);
-  display.setTextColor(ST77XX_WHITE,ST77XX_BLACK);
-  display.setCursor(posDigInLblX, posDigInLblY);
-  display.print("Digital In:");
-  display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
 
-  tftSerialPrint("boot");
+  //tftSerialPrint("boot");
   START_CANBUS_INIT:
   if(CAN_OK == CAN.begin(CAN_500KBPS,MCP_8MHz)) {
     tftSerialPrint("CAN OK");
@@ -285,33 +310,59 @@ int digitalPotWrite(int value, int addr) {
   digitalWrite(pinDigPot, HIGH);
 }
 
-void DisplayVolume(byte lvlVol, byte bytGage,byte dispType) {
-  
+//void DisplayVolume(byte lvlVol, byte bytGage,byte dispType) {
+//}
+
+void DisplayMenuOled(byte selItem, bool menuFullRefresh) {
+
+  if (menuFullRefresh) {
+    display.fillScreen(ST77XX_BLACK); //tft
+    display.setTextColor(ST77XX_WHITE,ST77XX_BLACK); //tft
+    display.setTextSize(2); //tft + oled
+    display.setCursor(0,0); //tft + oled
+    if (selItem <= MaxMenuOledItems){
+      j = 0;
+    } else {
+      j = (selItem >= MenuOledItems)?(MenuOledItems-MaxMenuOledItems):(selItem-1);
+    }
+    for (i=j;i<=j+MaxMenuOledItems;i=i+1){
+      display.print("  ");
+      display.println(arrMenuOled[i]);  
+    }  
+  } else {
+    display.fillRect(0, 0, 12, 240, ST77XX_BLACK);    
+  }
+    display.fillRect(3, (selItem*16)+2, 8, 4, ST77XX_WHITE);      
 }
 
-void DisplayMenuOled(byte selItem) {
-  display.fillScreen(ST77XX_BLACK); //tft
-  //display.clearDisplay(); //oled
-  display.setTextColor(ST77XX_WHITE,ST77XX_BLACK); //tft
-  display.setTextSize(2); //tft + oled
-  display.setCursor(0,0); //tft + oled
-  if (selItem < 1){
-    j = 0;
-  } else {
-    j = (selItem >= MenuOledItems)?(MenuOledItems-2):(selItem-1);
-  }
-  for (i=j;i<=j+2;i=i+1){
-    display.print(i==selItem?"> ":"  ");
-    display.println(arrMenuOled[i]);  
-  }  
-  //display.display(); //oled
-}
 
 void DisplayLevelsOled() {
   display.fillScreen(ST77XX_BLACK); //tft
+  display.setTextColor(ST77XX_WHITE,ST77XX_BLACK);
+  display.setTextSize(sizeTextLbl);
+  display.setCursor(posVolLblX, posVolLblY);
+  display.print(lblVol);
+  display.setCursor(posBassLblX, posBassLblY);
+  display.print(lblBass);
+  display.setTextColor(ST77XX_WHITE,ST77XX_BLACK);
+  display.setCursor(posDigInLblX, posDigInLblY);
+  display.print(lblDigIn);
+  display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
+
+    if (!blnBass) {
+      colorVolBar = ST77XX_YELLOW;
+      colorBassBar = ST77XX_LGRAY;
+    } else {
+      colorVolBar = ST77XX_LGRAY;
+      colorBassBar = ST77XX_YELLOW;
+    }
+
+
   //display.clearDisplay(); //oled
-  tftVolBarPrint(lvlVol, 0, colorVolBar);
-  tftVolBarPrint(lvlBass, 1, colorBassBar);
+  //tftVolBarPrint(lvlVol, 0, colorVolBar);
+  tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
+  //tftVolBarPrint(lvlBass, 1, colorBassBar);
+  tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
   tftVolPrint(blnDigitalInput,2);
 
   //DisplayVolume(lvlBass,1,bytVisualType);
@@ -337,10 +388,29 @@ void tftSerialPrint(const char *strOut, bool blnLN) {
   }
 }
 
+void tftSerialPrint(String strOut, bool blnLN) {
+  if ((display.getCursorY() > 230)||(display.getCursorY() < posTFTSerial)) {
+    display.setCursor(0, posTFTSerial);
+    display.fillRect(0, posTFTSerial, 240, 240, ST77XX_BLACK);    
+  }
+  display.setTextSize(1);
+  display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
+  if (blnLN) {
+    display.println(strOut);  
+  } else {
+    display.print(strOut);
+  }
+}
+
+
 void tftVolPrint(byte Level, byte pos){
   byte oldX = display.getCursorX();
   byte oldY = display.getCursorY();
-  display.setTextSize(2); //each symbol =10px + 2px space
+  byte bytDisplayLevel = (Level/2.56);  
+  Serial.println(Level,DEC);
+  Serial.println(bytDisplayLevel,DEC);
+  //display.setTextSize(2); //each symbol =10px + 2px space
+  display.setTextSize(sizeTextLbl); 
   display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
 
   switch (pos) {
@@ -360,18 +430,22 @@ void tftVolPrint(byte Level, byte pos){
     break;
   }
   if (pos < 2) {
-    if (Level < 10) {
-      display.print("  ");
-    } else if (Level < 100) {
+    //if (Level < 10) {
+    if (bytDisplayLevel < 10) {
+      //display.print("  ");
       display.print(" ");
-    } 
-    display.print(Level);
+    //} else if (Level < 100) {
+    } //else if (bytDisplayLevel < 100) {
+      //display.print(" ");
+    //} 
+    //display.print(Level);
+    display.print(bytDisplayLevel);
   }
   display.setCursor(oldX, oldY);
 }
 
-//void tftVolBarPrint(byte lvlVolOld, byte lvlVol, byte lvlType, uint16_t intColor){
-void tftVolBarPrint(byte lvlVol, byte lvlType, uint16_t intColor){
+void tftVolBarPrint(byte lvlVolOld, byte lvlVol, byte lvlType, uint16_t intColor){
+//void tftVolBarPrint(byte lvlVol, byte lvlType, uint16_t intColor){
   tftVolPrint(lvlVol, lvlType);
   byte posX;
   byte posY;
@@ -383,26 +457,26 @@ void tftVolBarPrint(byte lvlVol, byte lvlType, uint16_t intColor){
     posX = posBassBarX;
     posY = posBassBarY;
   }
-  //if (lvlVolOld > lvlVol) {
-  //    display.fillRect(intVolBarWidth, posY, display.width()-intVolBarWidth, posVolBarH, ST77XX_BLACK);
-      display.fillRect(posX, posY, display.width(), posVolBarH, ST77XX_BLACK);
-  //} else {
+  if (lvlVolOld > lvlVol) {
+      //display.fillRect(intVolBarWidth, posY, display.width()-intVolBarWidth, posVolBarH, ST77XX_BLACK);
+      display.fillRect(posX+intVolBarWidth, posY, widthVolBar-intVolBarWidth, posVolBarH, ST77XX_BLACK);
+      
+      //display.fillRect(posX, posY, display.width(), posVolBarH, ST77XX_BLACK);
+  } else {
       display.fillRect(posX, posY, intVolBarWidth, posVolBarH, intColor);
-  //} 
+  } 
 }
 
 void loop(){  
   timeCurrent = millis();
   if (lvlVolOld != lvlVol) {
     digitalPotWrite(lvlVol,addrVol);
-    //tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
-    tftVolBarPrint(lvlVol, 0, colorVolBar);
+    tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
     lvlVolOld = lvlVol;
   }
   if (lvlBassOld != lvlBass) {
     digitalPotWrite(lvlBass,addrBass);
-    //tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
-    tftVolBarPrint(lvlBass, 1, colorBassBar);
+    tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
     lvlBassOld = lvlBass;
   }
   if (blnDigitalInput != blnDigitalInputOld) {
@@ -419,10 +493,8 @@ void loop(){
       colorVolBar = ST77XX_LGRAY;
       colorBassBar = ST77XX_YELLOW;
     }
-    //tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
-    //tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
-    tftVolBarPrint(lvlVol, 0, colorVolBar);
-    tftVolBarPrint(lvlBass, 1, colorBassBar);
+    tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
+    tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
     blnBassOld = blnBass;
   }
   
@@ -455,11 +527,14 @@ void loop(){
           //EEPROM.update(eepromAddrBarType, bytVisualType);
         }
       }
-//      if (arrMenuOled[intMenuItem] == menuOledVolCtrlBy) {
-//        if (blnSubMenuActive) {
-//          //bytVolBy
-//        }
-//      }
+      if (arrMenuOled[intMenuItem] == menuOledVolCtrlBy) {
+        if (!blnVolByEnc) {
+          tftSerialPrint("Vol by encoder");
+        } else {
+          tftSerialPrint("Vol by CAN");
+        }
+        blnVolByEnc = !blnVolByEnc;
+      }
       if (arrMenuOled[intMenuItem] == menuOledSaveDefaults) {
           //Serial.println("Save all defaults");
           EEPROM.update(eepromAddrBlnBass, blnBass);
@@ -468,7 +543,20 @@ void loop(){
           EEPROM.update(eepromAddrVolBy, bytVolBy);
           blnMenu = false;
       }
-      blnSubMenuActive = !blnSubMenuActive;
+
+      if (arrMenuOled[intMenuItem] == menuOledSniffingCANGear) {
+        tftSerialPrint("can gear snif",true);
+        blnSnifCANGear = !blnSnifCANGear;
+        blnMenu = false;
+      }
+
+      if (arrMenuOled[intMenuItem] == menuOledSniffingCANVol) {
+        tftSerialPrint("can vol snif",true);
+        blnSnifCANVol = !blnSnifCANVol;
+        blnMenu = false;
+      }
+      
+      //blnSubMenuActive = !blnSubMenuActive;
       blnMenuButton = false;
     }
 
@@ -487,7 +575,7 @@ void loop(){
         //if (arrMenuOled[intMenuItem] == menuOledVolBarType) {DisplaySubMenuOled(bytVisualType,1);}
         //if (arrMenuOled[intMenuItem] == menuOledVolCtrlBy) { DisplaySubMenuOled(bytVolBy     ,2);}    
       } else {
-        DisplayMenuOled(intMenuItem);
+        DisplayMenuOled(intMenuItem, true);
         //tmTextPrint(arrMenuTM[intMenuItem]);
       }
     } else {
@@ -495,25 +583,6 @@ void loop(){
     }
     blnRefreshDisplay = false;
   }
-
-  if (blnRefreshDisplay) {
-    if (blnMenu) {
-/*    if (blnSubMenuActive){
-        if (arrMenuOled[intMenuItem] == menuOledBri) {       DisplaySubMenuOled(bytDisplayBri,0);}
-        if (arrMenuOled[intMenuItem] == menuOledVolBarType) {DisplaySubMenuOled(bytVisualType,1);}
-        if (arrMenuOled[intMenuItem] == menuOledVolCtrlBy) { DisplaySubMenuOled(bytVolBy     ,2);}    
-      } else {
-        DisplayMenuOled(intMenuItem);
-        //tmTextPrint(arrMenuTM[intMenuItem]);
-      }
-*/
-    } else {
-      DisplayLevelsOled();
-    }
-    
-    blnRefreshDisplay = false;
-  }
-
   
   blnEncButtonState = digitalRead(pinEncButton);
 
@@ -536,19 +605,13 @@ void loop(){
           if (blnMenu) {
             blnMenuButton = true;
           } else {
-            blnRefreshDisplay = true;
+            //blnRefreshDisplay = true;
             blnBass = !blnBass;
           }
         } else { //long enc button press
           blnMenu = true;
           blnRefreshDisplay = true;
           timeMenuEnabled = timeCurrent;
-          //if (!blnVolByEnc) {
-          //  tftSerialPrint("Vol by encoder");
-          //} else {
-          //  tftSerialPrint("Vol by CAN");
-          //}
-          //blnVolByEnc = !blnVolByEnc;
         }
       } else { //double click
         blnDigitalInput = !blnDigitalInput;
@@ -564,20 +627,28 @@ void loop(){
       canId = CAN.getCanId();
         if (canId == 0x5bf) { //wheelbuttons
           if (buf[0] == 0x0c) {
-              tftSerialPrint("DIG IN by CAN");
+              //tftSerialPrint("DIG IN by CAN");
               blnDigitalInput = !blnDigitalInput;
           }
         } 
-        if (canId == 0x3dc) {
-          if ((buf[5] & 0x0F)==0x06) {
-            intGear = 255;
-          } else {
-            if ((buf[5] & 0x0F)>0x07) {
-              intGear = 1;
+        if (canId == 0x3dc) { //gear selector
+          bytSnifCANGear = buf[5];
+          if (bytSnifCANGear != bytSnifCANGearOld) {
+            if (blnSnifCANGear) {
+              tftSerialPrint("can id 0x3dc ",false);
+              tftSerialPrint(String(buf[5],HEX),true);
             }
-          }
+            if ((bytSnifCANGear & 0x0F)==0x06) {
+              intGear = 255;
+            } else {
+              if ((bytSnifCANGear & 0x0F)>0x07) {
+                intGear = 1;
+              }
+            }
+            bytSnifCANGearOld = bytSnifCANGear;        
+          } 
         }
-        if ((canId == 0x17330b00)&&(buf[0] == 0x22)) {
+        if ((canId == 0x17330b00)&&(buf[0] == 0x22)) { //cam display
           if (buf[2] == 0x11) {
             //tftSerialPrint("cam display enabled");
             blnCamDisplayOn=1;
@@ -587,14 +658,32 @@ void loop(){
             blnCamDisplayOn=0;
           }
         }
-        if (canId == 0x17333110) {
-          if (buf[1] == 0x6F) {
-              if ((buf[0] == 0x4C)||(buf[0] == 0x3C)) {
-                  lvlVolCan=buf[5]; //Vol
+        if (canId == 0x17333110) {  //vol control
+          if (buf[1] == 0x6F) { //vol can 1
+            bytSnifCANVol = buf[5];
+            if (bytSnifCANVolOld != bytSnifCANVol) {
+              if (blnSnifCANVol) {
+                tftSerialPrint("canid 0x17222110 buf[1]=0x6f buf[0]=",false);
+                tftSerialPrint(String(buf[0],HEX),false);
+                tftSerialPrint(" buf[5]=",false);
+                tftSerialPrint(String(bytSnifCANVol,HEX),true);
               }
+              if ((buf[0] == 0x4C)||(buf[0] == 0x3C)) {
+                lvlVolCan=bytSnifCANVol; //Vol   
+              }
+              bytSnifCANVolOld = bytSnifCANVol;
+            }
           }
-          if ((buf[1] == 0x52)&&(buf[0] == 0x3C)) {
-                  lvlVolCan=buf[2]; //Vol  
+          if ((buf[1] == 0x52)&&(buf[0] == 0x3C)) { //vol can 2
+            bytSnifCANVol2 = buf[2];
+            if (bytSnifCANVol2 != bytSnifCANVolOld2) {
+              if (blnSnifCANVol) {
+                tftSerialPrint("canid 0x17222110 buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
+                tftSerialPrint(String(bytSnifCANVol2,HEX),true);
+              }
+              lvlVolCan=bytSnifCANVol2; //Vol  
+              bytSnifCANVolOld2 = bytSnifCANVol2;
+            }
           }
           if ((!blnDigitalInput)&&(!blnVolByEnc)) {
             if ((timeCurrent-timeDigitalInputChanged)>delayBeforeEnableVolByCan) {
@@ -635,7 +724,7 @@ void loop(){
     lvlTemp = (encoderPos - 0x80);
     encoderPos = 0x80;
     if (blnMenu) {
-      blnRefreshDisplay = true;
+      //blnRefreshDisplay = true;
       if (blnSubMenuActive){
 /*        if (arrMenuOled[intMenuItem] == menuOledBri) {
           bytDisplayBri = checkBriLvl(bytDisplayBri + lvlTemp);
@@ -650,6 +739,8 @@ void loop(){
       } else {
         intMenuItem = checkMenuItems(intMenuItem + lvlTemp);    
       }
+      DisplayMenuOled(intMenuItem, false);
+
       timeMenuEnabled = timeCurrent;
     } else {
       lvlTemp = lvlTemp*lvlStep;
