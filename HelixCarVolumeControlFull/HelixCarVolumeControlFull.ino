@@ -21,6 +21,20 @@
 #define ST77XX_WHITE 0xFFFF #define ST77XX_RED 0xF800    11111 000000 00000 #define ST77XX_GREEN 0x07E0  00000 111111 00000 #define ST77XX_BLUE 0x001F   00000 000000 11111 #define ST77XX_CYAN 0x07FF #define ST77XX_MAGENTA 0xF81F #define ST77XX_YELLOW 0xFFE0 11111 111111 00000 #define ST77XX_ORANGE 0xFC00
 */
 
+//GLOBAL PIN DEFINITION
+//Encoder pins
+#define pinEncA 2
+#define pinEncB 3
+#define pinEncButton 4
+
+#define pinCANShield 10
+#define pinDigPot 9    //Digital Pot Pins
+#define pinDigital 8   //Digital out switch
+#define pinCamButton 7 //cam change input button
+#define pinCamRelay 6  //cam change relay
+
+//GLOBAL PIN DEFINITION
+
 char strLvl[8];
 volatile byte lvlVol = 0x73; //start volume level
 volatile byte lvlBass = 0xC9; //start volume level
@@ -35,8 +49,8 @@ byte blnFrontCam = 1;
 unsigned long timeFrontCamPressed = 0;
 
 byte blnCamDisplayOn=0;
-bool blnBass = true; //set to 1 when we need to change Bass level
-bool blnBassOld = false;
+bool blnSub = true; //set to 1 when we need to change Bass level
+bool blnSubOld = false;
 
 bool blnDigitalInput = true;
 bool blnDigitalInputOld = false;
@@ -65,27 +79,15 @@ char inChar = -1;
 #define lvlStep 0x04
 #define addrVol 0x11
 #define addrBass 0x12
-#define pinDigPot 9
+
 #define intCANShieldInitRetry 5
-#define pinDigital 8
-#define pinCamButton 7
-#define pinCamRelay 6
 #define timeButtonWaitForInput 250
 #define timeButtonDebounce 30
 #define timeShortButtonPress 250
 #define maxLevel 255
 #define minLevel 0
 
-
-//PINS
-//Encoder pins
-#define pinEncA 2
-#define pinEncB 3
-#define pinEncButton 4
-//Digital Pot Pins
-#define pinCANShield 10
-
-#define eepromAddrBlnBass 0
+#define eepromAddrblnSub 0
 #define eepromAddrLvlBass 1
 #define eepromAddrLvlVol 2
 #define eepromAddrBri 3
@@ -216,6 +218,8 @@ byte bytSnifCANVolOld = 0x0;
 byte bytSnifCANVol2 = 0x0;
 byte bytSnifCANVolOld2 = 0x0;
 
+bool blnUpdateCanMFD = false;
+
 
 byte bytVisualType=0;
 
@@ -260,7 +264,7 @@ void setup() {
   //attachInterrupt(0,int0,CHANGE);
   //attachInterrupt(1,int1,CHANGE);
 
-  blnBass = EEPROM.read(eepromAddrBlnBass);
+  blnSub = EEPROM.read(eepromAddrblnSub);
   lvlBass = EEPROM.read(eepromAddrLvlBass);
   if (lvlBass > maxLevel) lvlBass=80;
   lvlVol = EEPROM.read(eepromAddrLvlVol);
@@ -349,7 +353,7 @@ void DisplayLevelsOled() {
   display.print(lblDigIn);
   display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
 
-    if (!blnBass) {
+    if (!blnSub) {
       colorVolBar = ST77XX_YELLOW;
       colorBassBar = ST77XX_LGRAY;
     } else {
@@ -473,20 +477,23 @@ void loop(){
     digitalPotWrite(lvlVol,addrVol);
     tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
     lvlVolOld = lvlVol;
+    blnUpdateCanMFD = true;
   }
   if (lvlBassOld != lvlBass) {
     digitalPotWrite(lvlBass,addrBass);
     tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
     lvlBassOld = lvlBass;
+    blnUpdateCanMFD = true;
   }
   if (blnDigitalInput != blnDigitalInputOld) {
     tftVolPrint(blnDigitalInput,2);
     digitalWrite(pinDigital, blnDigitalInput);
     blnDigitalInputOld = blnDigitalInput;
     timeDigitalInputChanged = timeCurrent;
+    blnUpdateCanMFD = true;
   }
-  if (blnBassOld != blnBass) {
-    if (!blnBass) {
+  if (blnSubOld != blnSub) {
+    if (!blnSub) {
       colorVolBar = ST77XX_YELLOW;
       colorBassBar = ST77XX_LGRAY;
     } else {
@@ -495,9 +502,47 @@ void loop(){
     }
     tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
     tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
-    blnBassOld = blnBass;
+    blnSubOld = blnSub;
   }
   
+  if (blnUpdateCanMFD) {
+    buf[0]=0x80; buf[1]=0x35; buf[2]=0x4c; buf[3]=0x55; buf[4]=0x1a; buf[5]=0x56; buf[6]=0x6f; buf[7]=0x6c; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0xc0; buf[1]=0x3a; buf[2]=0x20; 
+    
+    byte bytDisplayLevel = (lvlVol/2.56);
+    if (bytDisplayLevel < 10 ) {
+      buf[3]=0x30; buf[4]=48+bytDisplayLevel;
+    } else {
+      buf[3]=48+(bytDisplayLevel/10); buf[4]=48+(bytDisplayLevel-(bytDisplayLevel/10)*10);
+    }
+
+    buf[5]=0x20; buf[6]=0x53; buf[7]=0x75; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0xc1; buf[1]=0x62; buf[2]=0x3a; buf[3]=0x20; 
+
+    bytDisplayLevel = (lvlBass/2.56);
+    if (bytDisplayLevel < 10 ) {
+      buf[4]=0x30; buf[5]=48+bytDisplayLevel;
+    } else {
+      buf[4]=48+(bytDisplayLevel/10); buf[5]=48+(bytDisplayLevel-(bytDisplayLevel/10)*10);
+    }
+    buf[6]=0x20; buf[7]=0x44; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+
+    buf[0]=0xc2; buf[1]=0x69; buf[2]=0x67; buf[3]=0x49; buf[4]=0x6e; buf[5]=0x3a; buf[6]=0x20; buf[7]=0x4f; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0xc3; 
+//                        XX           XX  n or ff
+    if (blnDigitalInput) {
+      buf[1]=0x6e; buf[2]=0x20; 
+    } else {
+      buf[1]=0x66; buf[2]=0x66; 
+    }
+    buf[3]=0x48; buf[4]=0x00; buf[5]=0x00; buf[6]=0x0a; buf[7]=0x48; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0xc4; buf[1]=0x65; buf[2]=0x6c; buf[3]=0x69; buf[4]=0x78; buf[5]=0x20; buf[6]=0x4c; buf[7]=0x69; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0xc5; buf[1]=0x74; buf[2]=0x65; buf[3]=0x49; buf[4]=0x03; buf[5]=0x76; buf[6]=0x2e; buf[7]=0x36; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0xc6; buf[1]=0x4a; buf[2]=0x00; buf[3]=0x00; buf[4]=0x01; buf[5]=0x00; buf[6]=0x00; buf[7]=0x00; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+
+    blnUpdateCanMFD = false;
+  }
+
   if ((timeCurrent-timeFrontCamPressed)>500) {
     if (digitalRead(pinCamButton) == LOW) {  
       tftSerialPrint("cam button pressed ");
@@ -537,7 +582,7 @@ void loop(){
       }
       if (arrMenuOled[intMenuItem] == menuOledSaveDefaults) {
           //Serial.println("Save all defaults");
-          EEPROM.update(eepromAddrBlnBass, blnBass);
+          EEPROM.update(eepromAddrblnSub, blnSub);
           EEPROM.update(eepromAddrLvlBass, lvlBass);
           EEPROM.update(eepromAddrLvlVol, lvlVol);
           EEPROM.update(eepromAddrVolBy, bytVolBy);
@@ -606,7 +651,7 @@ void loop(){
             blnMenuButton = true;
           } else {
             //blnRefreshDisplay = true;
-            blnBass = !blnBass;
+            blnSub = !blnSub;
           }
         } else { //long enc button press
           blnMenu = true;
@@ -659,15 +704,34 @@ void loop(){
           }
         }
         if (canId == 0x17333110) {  //vol control
+              if (blnSnifCANVol) {
+                tftSerialPrint("0x17333110 ",false);
+                tftSerialPrint(String(buf[0],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[1],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[2],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[3],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[4],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[5],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[6],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[7],HEX),false);
+              }
+
           if (buf[1] == 0x6F) { //vol can 1
             bytSnifCANVol = buf[5];
             if (bytSnifCANVolOld != bytSnifCANVol) {
-              if (blnSnifCANVol) {
-                tftSerialPrint("canid 0x17222110 buf[1]=0x6f buf[0]=",false);
-                tftSerialPrint(String(buf[0],HEX),false);
-                tftSerialPrint(" buf[5]=",false);
-                tftSerialPrint(String(bytSnifCANVol,HEX),true);
-              }
+//              if (blnSnifCANVol) {
+//                tftSerialPrint("canid 0x17333110 buf[1]=0x6f buf[0]=",false);
+//                tftSerialPrint(String(buf[0],HEX),false);
+//                tftSerialPrint(" buf[5]=",false);
+//                tftSerialPrint(String(bytSnifCANVol,HEX),true);
+//              }
               if ((buf[0] == 0x4C)||(buf[0] == 0x3C)) {
                 lvlVolCan=bytSnifCANVol; //Vol   
               }
@@ -677,10 +741,10 @@ void loop(){
           if ((buf[1] == 0x52)&&(buf[0] == 0x3C)) { //vol can 2
             bytSnifCANVol2 = buf[2];
             if (bytSnifCANVol2 != bytSnifCANVolOld2) {
-              if (blnSnifCANVol) {
-                tftSerialPrint("canid 0x17222110 buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
-                tftSerialPrint(String(bytSnifCANVol2,HEX),true);
-              }
+//              if (blnSnifCANVol) {
+//                tftSerialPrint("canid 0x17333110 buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
+//                tftSerialPrint(String(bytSnifCANVol2,HEX),true);
+//              }
               lvlVolCan=bytSnifCANVol2; //Vol  
               bytSnifCANVolOld2 = bytSnifCANVol2;
             }
@@ -744,7 +808,7 @@ void loop(){
       timeMenuEnabled = timeCurrent;
     } else {
       lvlTemp = lvlTemp*lvlStep;
-      if (blnBass) {
+      if (blnSub) {
         lvlBass = checkVolLevel(lvlBass + lvlTemp);
       } else {
         lvlVol = checkVolLevel(lvlVol + lvlTemp);
