@@ -1,12 +1,6 @@
-/*ver 0.922
-  to do:
-    - standartize encoder - DONE
-    - add delay for volume by CAN
-    - add menu DONE
-      - save default vol and bass levels to power independed mem DONE
-      - can sniffing when R is not detected
-      - can sniffing when Vol is not detected
-      
+/*ver 0.923
+JAN2024 updated vol sniffer. added code to write control status to MFD
+
 */
 #include <EEPROM.h>
 #include <SPI.h>
