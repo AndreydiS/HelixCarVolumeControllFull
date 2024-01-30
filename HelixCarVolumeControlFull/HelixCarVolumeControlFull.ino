@@ -1,18 +1,15 @@
-/*ver 0.922
-  to do:
-    - standartize encoder - DONE
-    - add delay for volume by CAN
-    - add menu DONE
-      - save default vol and bass levels to power independed mem DONE
-      - can sniffing when R is not detected
-      - can sniffing when Vol is not detected
-      
+/*ver 0.924
+JAN2024 updated vol sniffer. added code to write control status to MFD
+    +bug fixes
+    #define canidMFD = 0x17333111
 */
 #include <EEPROM.h>
 #include <SPI.h>
 #include <mcp_can.h>
 #include <Adafruit_ST7789.h>
 #include <Adafruit_GFX.h>
+
+#define canidMFD = 0x17333111
 
 #define ST77XX_GRAY 0x38e7 //00111 000111 00111
 #define ST77XX_LGRAY 0x79EF //01111 011111 01111
@@ -506,7 +503,7 @@ void loop(){
   }
   
   if (blnUpdateCanMFD) {
-    buf[0]=0x80; buf[1]=0x35; buf[2]=0x4c; buf[3]=0x55; buf[4]=0x1a; buf[5]=0x56; buf[6]=0x6f; buf[7]=0x6c; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[0]=0x80; buf[1]=0x35; buf[2]=0x4c; buf[3]=0x55; buf[4]=0x1a; buf[5]=0x56; buf[6]=0x6f; buf[7]=0x6c; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
     buf[0]=0xc0; buf[1]=0x3a; buf[2]=0x20; 
     
     byte bytDisplayLevel = (lvlVol/2.56);
@@ -515,8 +512,7 @@ void loop(){
     } else {
       buf[3]=48+(bytDisplayLevel/10); buf[4]=48+(bytDisplayLevel-(bytDisplayLevel/10)*10);
     }
-
-    buf[5]=0x20; buf[6]=0x53; buf[7]=0x75; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[5]=0x20; buf[6]=0x53; buf[7]=0x75; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
     buf[0]=0xc1; buf[1]=0x62; buf[2]=0x3a; buf[3]=0x20; 
 
     bytDisplayLevel = (lvlBass/2.56);
@@ -525,20 +521,20 @@ void loop(){
     } else {
       buf[4]=48+(bytDisplayLevel/10); buf[5]=48+(bytDisplayLevel-(bytDisplayLevel/10)*10);
     }
-    buf[6]=0x20; buf[7]=0x44; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
 
-    buf[0]=0xc2; buf[1]=0x69; buf[2]=0x67; buf[3]=0x49; buf[4]=0x6e; buf[5]=0x3a; buf[6]=0x20; buf[7]=0x4f; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[6]=0x20; buf[7]=0x44; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
+
+    buf[0]=0xc2; buf[1]=0x69; buf[2]=0x67; buf[3]=0x49; buf[4]=0x6e; buf[5]=0x3a; buf[6]=0x20; buf[7]=0x4f; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
     buf[0]=0xc3; 
-//                        XX           XX  n or ff
     if (blnDigitalInput) {
-      buf[1]=0x6e; buf[2]=0x20; 
-    } else {
       buf[1]=0x66; buf[2]=0x66; 
+    } else {
+      buf[1]=0x6e; buf[2]=0x20; 
     }
-    buf[3]=0x48; buf[4]=0x00; buf[5]=0x00; buf[6]=0x0a; buf[7]=0x48; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
-    buf[0]=0xc4; buf[1]=0x65; buf[2]=0x6c; buf[3]=0x69; buf[4]=0x78; buf[5]=0x20; buf[6]=0x4c; buf[7]=0x69; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
-    buf[0]=0xc5; buf[1]=0x74; buf[2]=0x65; buf[3]=0x49; buf[4]=0x03; buf[5]=0x76; buf[6]=0x2e; buf[7]=0x36; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
-    buf[0]=0xc6; buf[1]=0x4a; buf[2]=0x00; buf[3]=0x00; buf[4]=0x01; buf[5]=0x00; buf[6]=0x00; buf[7]=0x00; CAN.sendMsgBuf(0x17333110, 1, 8, buf);
+    buf[3]=0x48; buf[4]=0x00; buf[5]=0x00; buf[6]=0x0a; buf[7]=0x48; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
+    buf[0]=0xc4; buf[1]=0x65; buf[2]=0x6c; buf[3]=0x69; buf[4]=0x78; buf[5]=0x20; buf[6]=0x4c; buf[7]=0x69; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
+    buf[0]=0xc5; buf[1]=0x74; buf[2]=0x65; buf[3]=0x49; buf[4]=0x03; buf[5]=0x76; buf[6]=0x2e; buf[7]=0x36; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
+    buf[0]=0xc6; buf[1]=0x4a; buf[2]=0x00; buf[3]=0x00; buf[4]=0x01; buf[5]=0x00; buf[6]=0x00; buf[7]=0x00; CAN.sendMsgBuf(canidMFD, 1, 8, buf);
 
     blnUpdateCanMFD = false;
   }
@@ -720,7 +716,7 @@ void loop(){
                 tftSerialPrint(" ",false);
                 tftSerialPrint(String(buf[6],HEX),false);
                 tftSerialPrint(" ",false);
-                tftSerialPrint(String(buf[7],HEX),false);
+                tftSerialPrint(String(buf[7],HEX),true);
               }
 
           if (buf[1] == 0x6F) { //vol can 1
