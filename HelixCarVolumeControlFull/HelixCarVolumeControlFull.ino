@@ -1,6 +1,7 @@
-/*ver 0.923
+/*ver 0.924
 JAN2024 updated vol sniffer. added code to write control status to MFD
-
+bug fixes
+canidMFD = 0x17333111
 */
 #include <EEPROM.h>
 #include <SPI.h>
