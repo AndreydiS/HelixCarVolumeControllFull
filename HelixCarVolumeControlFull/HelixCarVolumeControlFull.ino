@@ -9,7 +9,7 @@ canidMFD = 0x17333111
 #include <Adafruit_ST7789.h>
 #include <Adafruit_GFX.h>
 
-#define canidMFD = 0x17333111
+#define canidMFD 0x17333111
 
 #define ST77XX_GRAY 0x38e7 //00111 000111 00111
 #define ST77XX_LGRAY 0x79EF //01111 011111 01111
