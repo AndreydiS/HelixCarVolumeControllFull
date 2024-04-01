@@ -79,7 +79,7 @@ char inChar = -1;
 #define addrVol 0x11
 #define addrBass 0x12
 
-#define intCANShieldInitRetry 5
+#define intCANShieldInitRetry 3
 #define timeButtonWaitForInput 250
 #define timeButtonDebounce 30
 #define timeShortButtonPress 250
@@ -296,7 +296,7 @@ void setup() {
     //CAN.init_Filt(0, 0, 0x05bf); //wheelbuttons
     //CAN.init_Filt(1, 0, 0x03dc);  //gears selector
     CAN.init_Mask(0, 0, 0x0000); 
-    //0x0663 bit5 XX*256+5 -voltage
+    //0x0663 bit5 XX/20+5 -voltage
   } else {
     tftSerialPrint("CAN Failed");
     delay(300);
@@ -335,10 +335,13 @@ void DisplayMenuOled(byte selItem, bool menuFullRefresh) {
       display.print("  ");
       display.println(arrMenuOled[i]);  
     }  
+    display.println("");
+    display.print(batteryVoltage);
+    display.println(" v");
   } else {
     display.fillRect(0, 0, 12, 240, ST77XX_BLACK);    
   }
-    display.fillRect(3, (selItem*16)+2, 8, 4, ST77XX_WHITE);      
+  display.fillRect(3, (selItem*16)+2, 8, 4, ST77XX_WHITE);      
 }
 
 
@@ -413,8 +416,8 @@ void tftVolPrint(byte Level, byte pos){
   byte oldX = display.getCursorX();
   byte oldY = display.getCursorY();
   byte bytDisplayLevel = (Level/2.56);  
-  Serial.println(Level,DEC);
-  Serial.println(bytDisplayLevel,DEC);
+  //Serial.println(Level,DEC);
+  //Serial.println(bytDisplayLevel,DEC);
   //display.setTextSize(2); //each symbol =10px + 2px space
   display.setTextSize(sizeTextLbl); 
   display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
@@ -512,7 +515,33 @@ void loop(){
     tftVolBarPrint(lvlSubOld, lvlSub, 1, colorBassBar);
     blnSubOld = blnSub;
   }
-  
+/*
+$Artist = "Helix Lite"
+$Album = "v.6"
+$Song = "Vol: 12 Sub: 92 DigIn: On "
+80,35,4c,55,1A,56,6f,6c,
+C0,3a,20,31,32,20,53,75,
+C1,62,3a,20,39,32,20,44,
+C2,69,67,49,6e,3a,20,4f,
+C3,6e,20,48,00,00,0A,48,
+C4,65,6c,69,78,20,4c,69,
+C5,74,65,49,03,76,2e,36,
+C6,4a,00,00,01,00,00,00,
+
+$Artist = "Helix Lite"
+$Album = "12.45v"
+$Song = "Vol: 12 Sub: 92 DigIn: On "
+80,38,4c,55,1A,56,6f,6c,
+C0,3a,20,31,32,20,53,75,
+C1,62,3a,20,39,32,20,44,
+C2,69,67,49,6e,3a,20,4f,
+C3,6e,20,48,00,00,0A,48,
+C4,65,6c,69,78,20,4c,69,
+C5,74,65,49,06,31,32,2e, //12.
+C6,34,35,76,4a,00,00,01, //45v
+C7,00,00,00,
+*/  
+
   if (blnUpdateCanMFD) {
     writeToCan(canidMFD,8,0x4C,0x50,0x0A,0x05,0x00,0x07,0x00,0x00); //showing music logo
     writeToCan(canidMFD,8,0x80,0x35,0x4c,0x55,0x1a,0x56,0x6f,0x6c);
@@ -665,8 +694,8 @@ void loop(){
               blnSwitch = !blnSwitch;
           }
         } 
-        if (canId == 0x663) { //voltage //0x0663 bit5 XX*256+5 -voltage
-          batteryVoltage = buf[5]*256+5;            
+        if (canId == 0x663) { //voltage //0x0663 bit5 XX/20+5 -voltage
+          batteryVoltage = buf[5]/20+5;            
         }
         if (canId == 0x3dc) { //gear selector
           bytSnifCANGear = buf[5];
@@ -832,6 +861,34 @@ byte checkVolLevel(int lvl) {
       }
     }
   }
+  byte splitDigit4(unsigned int lvl, byte pos) {
+    switch (pos) {
+      case 1:
+      return 0x30+(lvl % 10);
+      break;
+      case 2:
+      return 0x30+((lvl / 10) % 10);
+      break;
+      case 3:
+      return 0x30+((lvl / 100) % 10);
+      break;
+      case 4:
+      return 0x30+((lvl / 1000) % 10);
+      break;
+    }
+  }
+  byte splitDigitAny(unsigned int lvl, byte pos) {
+    unsigned int mult=1;
+    for (i=1;i<pos;i=i+1){
+      mult = mult * 10;
+    }
+    if (lvl < mult) {
+      return 0x20;
+    } else {
+      return 0x30+[byte]((lvl / mult) % 10);
+    }
+  }
+
 #endif
 
 byte checkMenuItems(int i) {
