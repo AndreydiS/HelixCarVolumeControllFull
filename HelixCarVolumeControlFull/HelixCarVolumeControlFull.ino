@@ -199,7 +199,8 @@ uint16_t colorVolBar = ST77XX_YELLOW;
 uint16_t colorBassBar = ST77XX_YELLOW;
 float fltBarWidthToVolLvl = widthVolBar/256.0;
 byte intVolBarWidth = 0;
-float batteryVoltage =0;
+//float batteryVoltage =0;
+unsigned int battVolt = 0;
 
 
 INT32U canId = 0x0;
@@ -336,7 +337,9 @@ void DisplayMenuOled(byte selItem, bool menuFullRefresh) {
       display.println(arrMenuOled[i]);  
     }  
     display.println("");
-    display.print(batteryVoltage);
+    //display.print(batteryVoltage);
+    display.print("  ");
+    display.print((float)battVolt/100);
     display.println(" v");
   } else {
     display.fillRect(0, 0, 12, 240, ST77XX_BLACK);    
@@ -528,7 +531,8 @@ C4,65,6c,69,78,20,4c,69,
 C5,74,65,49,03,76,2e,36,
 C6,4a,00,00,01,00,00,00,
 
-$Artist = "Helix Lite"
+$Artist = "Helix Lite" -> 
+          " DSP Ctrl "
 $Album = "12.45v"
 $Song = "Vol: 12 Sub: 92 DigIn: On "
 80,38,4c,55,1A,56,6f,6c,
@@ -544,6 +548,26 @@ C7,00,00,00,
 
   if (blnUpdateCanMFD) {
     writeToCan(canidMFD,8,0x4C,0x50,0x0A,0x05,0x00,0x07,0x00,0x00); //showing music logo
+    writeToCan(canidMFD,8,0x80,0x38,0x4c,0x55,0x1a,0x56,0x6f,0x6c); //actual text
+    writeToCan(canidMFD,8,0xc0,0x3a,0x20,splitDigitAny(lvlVol/2.56,2),splitDigitAny(lvlVol/2.56,1),0x20,0x53,0x75);
+    writeToCan(canidMFD,8,0xc1,0x62,0x3a,0x20,splitDigitAny(lvlSub/2.56,2),splitDigitAny(lvlSub/2.56,1),0x20,0x44);
+
+    writeToCan(canidMFD,8,0xc2,0x69,0x67,0x49,0x6e,0x3a,0x20,0x4f);
+    if (blnSwitch) {
+      writeToCan(canidMFD,8,0xc3,0x66,0x66,0x48,0x00,0x00,0x0a,0x48);
+    } else {
+      writeToCan(canidMFD,8,0xc3,0x6e,0x20,0x48,0x00,0x00,0x0a,0x48);
+    }
+    writeToCan(canidMFD,8,0xc4,0x65,0x6c,0x69,0x78,0x20,0x4c,0x69);
+    writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x06,splitDigitAny(battVolt,4),splitDigitAny(battVolt,3),0x2e); //12.
+    writeToCan(canidMFD,8,0xc6,splitDigitAny(battVolt,2),splitDigitAny(battVolt,1),0x76,0x4a,0x00,0x00,0x01); //45v
+    writeToCan(canidMFD,4,0xc7,0x00,0x00,0x00,0x00,0x00,0x00,0x00);
+    blnUpdateCanMFD = false;
+  }
+
+/*
+  if (blnUpdateCanMFD) {
+    writeToCan(canidMFD,8,0x4C,0x50,0x0A,0x05,0x00,0x07,0x00,0x00); //showing music logo
     writeToCan(canidMFD,8,0x80,0x35,0x4c,0x55,0x1a,0x56,0x6f,0x6c);
     writeToCan(canidMFD,8,0xc0,0x3a,0x20,splitDigit(lvlVol,0),splitDigit(lvlVol,1),0x20,0x53,0x75);
     writeToCan(canidMFD,8,0xc1,0x62,0x3a,0x20,splitDigit(lvlSub,0),splitDigit(lvlSub,1),0x20,0x44);
@@ -556,11 +580,13 @@ C7,00,00,00,
     writeToCan(canidMFD,8,0xc4,0x65,0x6c,0x69,0x78,0x20,0x4c,0x69);
     //writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,0x76,0x2e,0x36); //v.6
     //batteryVoltage
-    writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,splitDigit(batteryVoltage,0),splitDigit(batteryVoltage,1),0x76); //12v
+    //writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,splitDigit(batteryVoltage,0),splitDigit(batteryVoltage,1),0x76); //12v
+    writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,splitDigitAny(battVolt,4),splitDigitAny(battVolt,3),0x76); //12v
+    
     writeToCan(canidMFD,8,0xc6,0x4a,0x00,0x00,0x01,0x00,0x00,0x00);
     blnUpdateCanMFD = false;
   }
-
+*/
   if ((timeCurrent-timeFrontCamPressed)>500) {
     if (digitalRead(pinCamButton) == LOW) {  
       tftSerialPrint("cam button pressed ");
@@ -695,7 +721,8 @@ C7,00,00,00,
           }
         } 
         if (canId == 0x663) { //voltage //0x0663 bit5 XX/20+5 -voltage
-          batteryVoltage = buf[5]/20+5;            
+          //batteryVoltage = (float)buf[5]/20+5;    
+          battVolt = buf[5]*5+500;
         }
         if (canId == 0x3dc) { //gear selector
           bytSnifCANGear = buf[5];
@@ -846,37 +873,6 @@ byte checkVolLevel(int lvl) {
 }
 
 #if CANEnabled == 1
-  byte splitDigit(byte lvl, byte low) {
-    if (low) {
-      if (lvl < 10 ) {
-        return 0x30+lvl;
-      } else {
-        return 0x30+(lvl-(lvl/10)*10);
-      }
-    } else {
-      if (lvl < 10 ) {
-        return 0x30;
-      } else {
-        return 0x30+(lvl/10);
-      }
-    }
-  }
-  byte splitDigit4(unsigned int lvl, byte pos) {
-    switch (pos) {
-      case 1:
-      return 0x30+(lvl % 10);
-      break;
-      case 2:
-      return 0x30+((lvl / 10) % 10);
-      break;
-      case 3:
-      return 0x30+((lvl / 100) % 10);
-      break;
-      case 4:
-      return 0x30+((lvl / 1000) % 10);
-      break;
-    }
-  }
   byte splitDigitAny(unsigned int lvl, byte pos) {
     unsigned int mult=1;
     for (i=1;i<pos;i=i+1){
@@ -885,10 +881,9 @@ byte checkVolLevel(int lvl) {
     if (lvl < mult) {
       return 0x20;
     } else {
-      return 0x30+[byte]((lvl / mult) % 10);
+      return 0x30+((lvl / mult) % 10);
     }
   }
-
 #endif
 
 byte checkMenuItems(int i) {
