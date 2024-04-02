@@ -1,16 +1,12 @@
-/*ver 0.922
-  to do:
-    - standartize encoder - DONE
-    - add delay for volume by CAN
-    - add menu DONE
-      - save default vol and bass levels to power independed mem DONE
-      - can sniffing when R is not detected
-      - can sniffing when Vol is not detected
-      
-*/
+#define softVer 1.0
+
+//JAN2024 updated vol sniffer. added code to write control status to MFD bug fixes canidMFD = 0x17333111
+//APR2024 reading voltage level and showing on MFD
+
+#define CANEnabled 1 //0-No CAN module installed 1-CAN installed
+
 #include <EEPROM.h>
 #include <SPI.h>
-#include <mcp_can.h>
 #include <Adafruit_ST7789.h>
 #include <Adafruit_GFX.h>
 
@@ -21,13 +17,43 @@
 #define ST77XX_WHITE 0xFFFF #define ST77XX_RED 0xF800    11111 000000 00000 #define ST77XX_GREEN 0x07E0  00000 111111 00000 #define ST77XX_BLUE 0x001F   00000 000000 11111 #define ST77XX_CYAN 0x07FF #define ST77XX_MAGENTA 0xF81F #define ST77XX_YELLOW 0xFFE0 11111 111111 00000 #define ST77XX_ORANGE 0xFC00
 */
 
-char strLvl[8];
+//GLOBAL PIN DEFINITION
+//Encoder pins
+#define pinEncA 2
+#define pinEncB 3
+#define pinEncButton 4
+
+#define pinCANShield 10
+#define pinDigPot 9    //Digital Pot Pins
+#define pinDigital 8   //Digital out switch
+#define pinCamButton 7 //cam change input button
+#define pinCamRelay 6  //cam change relay
+//GLOBAL PIN DEFINITION
+
+#if CANEnabled == 1
+  #include <mcp_can.h>
+  #define intCANShieldInitRetry 3
+  #define canidVoltage 0x663
+  #define canidMFD 0x17333111
+  #define canidVol 0x17333110
+  #define canidWheelButton 0x5bf
+
+  bool blnCANinitFailed=false;
+  bool blnUpdateCanMFD = false;
+  MCP_CAN CAN(pinCANShield);
+  INT32U canId = 0x0;
+  byte len = 0;
+  byte buf[8];
+  byte lvlVolCan=0x0e;
+#endif
+
+
+//char strLvl[8];
 volatile byte lvlVol = 0x73; //start volume level
-volatile byte lvlBass = 0xC9; //start volume level
+volatile byte lvlSub = 0xC9; //start volume level
 byte lvlVolOld = 0x0;
-byte lvlBassOld = 0x0;
+byte lvlSubOld = 0x0;
 volatile int lvlTemp = 0x00;
-byte lvlVolCan=0x0e;
 
 byte i = 0;
 byte j = 0;
@@ -35,11 +61,11 @@ byte blnFrontCam = 1;
 unsigned long timeFrontCamPressed = 0;
 
 byte blnCamDisplayOn=0;
-bool blnBass = true; //set to 1 when we need to change Bass level
-bool blnBassOld = false;
+bool blnSub = true; //set to 1 when we need to change Bass level
+bool blnSubOld = false;
 
-bool blnDigitalInput = true;
-bool blnDigitalInputOld = false;
+bool blnSwitch = true;
+bool blnSwitchOld = false;
 unsigned long timeDigitalInputChanged = 0;
 #define delayBeforeEnableVolByCan 3000
 
@@ -52,12 +78,9 @@ unsigned long timeButtonPressed = 0;
 unsigned long timeButtonPressedLastTime = 0;
 unsigned long timeButtonPressedDuration = 0;
 
-
-//unsigned long timeVolEnabled = 0;
 byte buttonPressedCount=0;
 byte intGear=0;
 byte intGearPrev=0;
-bool blnCANinitFailed=false;
 
 char strInSerial[16];
 char inChar = -1;
@@ -65,28 +88,16 @@ char inChar = -1;
 #define lvlStep 0x04
 #define addrVol 0x11
 #define addrBass 0x12
-#define pinDigPot 9
-#define intCANShieldInitRetry 5
-#define pinDigital 8
-#define pinCamButton 7
-#define pinCamRelay 6
+
+#define intCANShieldInitRetry 3
 #define timeButtonWaitForInput 250
 #define timeButtonDebounce 30
 #define timeShortButtonPress 250
 #define maxLevel 255
 #define minLevel 0
 
-
-//PINS
-//Encoder pins
-#define pinEncA 2
-#define pinEncB 3
-#define pinEncButton 4
-//Digital Pot Pins
-#define pinCANShield 10
-
-#define eepromAddrBlnBass 0
-#define eepromAddrLvlBass 1
+#define eepromAddrblnSub 0
+#define eepromAddrlvlSub 1
 #define eepromAddrLvlVol 2
 #define eepromAddrBri 3
 #define eepromAddrBarType 4
@@ -198,14 +209,7 @@ uint16_t colorVolBar = ST77XX_YELLOW;
 uint16_t colorBassBar = ST77XX_YELLOW;
 float fltBarWidthToVolLvl = widthVolBar/256.0;
 byte intVolBarWidth = 0;
-
-
-INT32U canId = 0x0;
-//unsigned char len = 0;
-byte len = 0;
-//unsigned char buf[8];
-byte buf[8];
-MCP_CAN CAN(pinCANShield);
+unsigned int battVolt = 0;
 
 bool blnSnifCANGear = false;
 bool blnSnifCANVol = false;
@@ -215,7 +219,6 @@ byte bytSnifCANVol = 0x0;
 byte bytSnifCANVolOld = 0x0;
 byte bytSnifCANVol2 = 0x0;
 byte bytSnifCANVolOld2 = 0x0;
-
 
 byte bytVisualType=0;
 
@@ -253,16 +256,16 @@ void setup() {
   pinMode(pinCamButton, INPUT_PULLUP);
   pinMode(pinCamRelay, OUTPUT);
 
-  digitalWrite(pinDigital, blnDigitalInput);
+  digitalWrite(pinDigital, blnSwitch);
   digitalWrite(pinCamRelay, blnFrontCam);
   //digitalWrite(pinEncA, HIGH);
   //digitalWrite(pinEncB, HIGH);
   //attachInterrupt(0,int0,CHANGE);
   //attachInterrupt(1,int1,CHANGE);
 
-  blnBass = EEPROM.read(eepromAddrBlnBass);
-  lvlBass = EEPROM.read(eepromAddrLvlBass);
-  if (lvlBass > maxLevel) lvlBass=80;
+  blnSub = EEPROM.read(eepromAddrblnSub);
+  lvlSub = EEPROM.read(eepromAddrlvlSub);
+  if (lvlSub > maxLevel) lvlSub=80;
   lvlVol = EEPROM.read(eepromAddrLvlVol);
   if (lvlVol > maxLevel) lvlVol=60;
   bytDisplayBri = EEPROM.read(eepromAddrBri);
@@ -275,7 +278,7 @@ void setup() {
 
   SPI.begin();
   digitalPotWrite(lvlVol,addrVol); //set wiper to default
-  digitalPotWrite(lvlBass,addrBass); //set wiper to default
+  digitalPotWrite(lvlSub,addrBass); //set wiper to default
   delay(100);
   display.init(240, 240);    //display.init(240, 240, SPI_MODE2);    // Init ST7789 display 240x240 pixel
   display.setRotation(2);// if the screen is flipped, remove this command
@@ -286,11 +289,13 @@ void setup() {
     tftSerialPrint("CAN OK");
     delay(100);
     CAN.init_Mask(1, 1, 0x1fffffff);
-    CAN.init_Filt(2, 1, 0x17333110); //volume from head unit
+    CAN.init_Filt(2, 1, canidVol); //volume from head unit
     CAN.init_Filt(3, 1, 0x17330b00); //cam display?
-    CAN.init_Mask(0, 0, 0x07ff); 
-    CAN.init_Filt(0, 0, 0x05bf); //wheelbuttons
-    CAN.init_Filt(1, 0, 0x3dc);  //gears selector
+    //CAN.init_Mask(0, 0, 0x07ff); 
+    //CAN.init_Filt(0, 0, canidWheelButton); //wheelbuttons
+    //CAN.init_Filt(1, 0, 0x03dc);  //gears selector
+    CAN.init_Mask(0, 0, 0x0000); 
+    //0x0663 bit5 XX/20+5 -voltage
   } else {
     tftSerialPrint("CAN Failed");
     delay(300);
@@ -329,10 +334,15 @@ void DisplayMenuOled(byte selItem, bool menuFullRefresh) {
       display.print("  ");
       display.println(arrMenuOled[i]);  
     }  
+    display.println("");
+    //display.print(batteryVoltage);
+    display.print("  ");
+    display.print((float)battVolt/100);
+    display.println(" v");
   } else {
     display.fillRect(0, 0, 12, 240, ST77XX_BLACK);    
   }
-    display.fillRect(3, (selItem*16)+2, 8, 4, ST77XX_WHITE);      
+  display.fillRect(3, (selItem*16)+2, 8, 4, ST77XX_WHITE);      
 }
 
 
@@ -349,7 +359,7 @@ void DisplayLevelsOled() {
   display.print(lblDigIn);
   display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
 
-    if (!blnBass) {
+    if (!blnSub) {
       colorVolBar = ST77XX_YELLOW;
       colorBassBar = ST77XX_LGRAY;
     } else {
@@ -361,13 +371,13 @@ void DisplayLevelsOled() {
   //display.clearDisplay(); //oled
   //tftVolBarPrint(lvlVol, 0, colorVolBar);
   tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
-  //tftVolBarPrint(lvlBass, 1, colorBassBar);
-  tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
-  tftVolPrint(blnDigitalInput,2);
+  //tftVolBarPrint(lvlSub, 1, colorBassBar);
+  tftVolBarPrint(lvlSubOld, lvlSub, 1, colorBassBar);
+  tftVolPrint(blnSwitch,2);
 
-  //DisplayVolume(lvlBass,1,bytVisualType);
+  //DisplayVolume(lvlSub,1,bytVisualType);
   //DisplayVolume(lvlVol,0,bytVisualType);
-  //DisplayVolume(blnDigitalInput,2,bytVisualType);  
+  //DisplayVolume(blnSwitch,2,bytVisualType);  
 }
 
 void tftSerialPrint(const char *strOut) {
@@ -407,8 +417,8 @@ void tftVolPrint(byte Level, byte pos){
   byte oldX = display.getCursorX();
   byte oldY = display.getCursorY();
   byte bytDisplayLevel = (Level/2.56);  
-  Serial.println(Level,DEC);
-  Serial.println(bytDisplayLevel,DEC);
+  //Serial.println(Level,DEC);
+  //Serial.println(bytDisplayLevel,DEC);
   //display.setTextSize(2); //each symbol =10px + 2px space
   display.setTextSize(sizeTextLbl); 
   display.setTextColor(ST77XX_GREEN,ST77XX_BLACK);
@@ -467,26 +477,35 @@ void tftVolBarPrint(byte lvlVolOld, byte lvlVol, byte lvlType, uint16_t intColor
   } 
 }
 
+void writeToCan(INT32U canId, byte len, byte b0, byte b1,byte b2, byte b3,byte b4, byte b5,byte b6, byte b7) {
+  byte buf[8];
+    buf[0]=b0; buf[1]=b1; buf[2]=b2; buf[3]=b3; buf[4]=b4; buf[5]=b5; buf[6]=b6; buf[7]=b7;
+    CAN.sendMsgBuf(canId, 1, len, buf);
+}
+
 void loop(){  
   timeCurrent = millis();
   if (lvlVolOld != lvlVol) {
     digitalPotWrite(lvlVol,addrVol);
     tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
     lvlVolOld = lvlVol;
+    blnUpdateCanMFD = true;
   }
-  if (lvlBassOld != lvlBass) {
-    digitalPotWrite(lvlBass,addrBass);
-    tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
-    lvlBassOld = lvlBass;
+  if (lvlSubOld != lvlSub) {
+    digitalPotWrite(lvlSub,addrBass);
+    tftVolBarPrint(lvlSubOld, lvlSub, 1, colorBassBar);
+    lvlSubOld = lvlSub;
+    blnUpdateCanMFD = true;
   }
-  if (blnDigitalInput != blnDigitalInputOld) {
-    tftVolPrint(blnDigitalInput,2);
-    digitalWrite(pinDigital, blnDigitalInput);
-    blnDigitalInputOld = blnDigitalInput;
+  if (blnSwitch != blnSwitchOld) {
+    tftVolPrint(blnSwitch,2);
+    digitalWrite(pinDigital, blnSwitch);
+    blnSwitchOld = blnSwitch;
     timeDigitalInputChanged = timeCurrent;
+    blnUpdateCanMFD = true;
   }
-  if (blnBassOld != blnBass) {
-    if (!blnBass) {
+  if (blnSubOld != blnSub) {
+    if (!blnSub) {
       colorVolBar = ST77XX_YELLOW;
       colorBassBar = ST77XX_LGRAY;
     } else {
@@ -494,10 +513,78 @@ void loop(){
       colorBassBar = ST77XX_YELLOW;
     }
     tftVolBarPrint(lvlVolOld, lvlVol, 0, colorVolBar);
-    tftVolBarPrint(lvlBassOld, lvlBass, 1, colorBassBar);
-    blnBassOld = blnBass;
+    tftVolBarPrint(lvlSubOld, lvlSub, 1, colorBassBar);
+    blnSubOld = blnSub;
   }
-  
+/*
+$Artist = "Helix Lite"
+$Album = "v.6"
+$Song = "Vol: 12 Sub: 92 DigIn: On "
+80,35,4c,55,1A,56,6f,6c,
+C0,3a,20,31,32,20,53,75,
+C1,62,3a,20,39,32,20,44,
+C2,69,67,49,6e,3a,20,4f,
+C3,6e,20,48,00,00,0A,48,
+C4,65,6c,69,78,20,4c,69,
+C5,74,65,49,03,76,2e,36,
+C6,4a,00,00,01,00,00,00,
+
+$Artist = "Helix Lite" -> 
+          " DSP Ctrl "
+$Album = "12.45v"
+$Song = "Vol: 12 Sub: 92 DigIn: On "
+80,38,4c,55,1A,56,6f,6c,
+C0,3a,20,31,32,20,53,75,
+C1,62,3a,20,39,32,20,44,
+C2,69,67,49,6e,3a,20,4f,
+C3,6e,20,48,00,00,0A,48,
+C4,65,6c,69,78,20,4c,69,
+C5,74,65,49,06,31,32,2e, //12.
+C6,34,35,76,4a,00,00,01, //45v
+C7,00,00,00,
+*/  
+
+  if (blnUpdateCanMFD) {
+    writeToCan(canidMFD,8,0x4C,0x50,0x0A,0x05,0x00,0x07,0x00,0x00); //showing music logo
+    writeToCan(canidMFD,8,0x80,0x38,0x4c,0x55,0x1a,0x56,0x6f,0x6c); //actual text
+    writeToCan(canidMFD,8,0xc0,0x3a,0x20,splitDigitAny(lvlVol/2.56,2),splitDigitAny(lvlVol/2.56,1),0x20,0x53,0x75);
+    writeToCan(canidMFD,8,0xc1,0x62,0x3a,0x20,splitDigitAny(lvlSub/2.56,2),splitDigitAny(lvlSub/2.56,1),0x20,0x44);
+
+    writeToCan(canidMFD,8,0xc2,0x69,0x67,0x49,0x6e,0x3a,0x20,0x4f);
+    if (blnSwitch) {
+      writeToCan(canidMFD,8,0xc3,0x66,0x66,0x48,0x00,0x00,0x0a,0x48);
+    } else {
+      writeToCan(canidMFD,8,0xc3,0x6e,0x20,0x48,0x00,0x00,0x0a,0x48);
+    }
+    writeToCan(canidMFD,8,0xc4,0x65,0x6c,0x69,0x78,0x20,0x4c,0x69);
+    writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x06,splitDigitAny(battVolt,4),splitDigitAny(battVolt,3),0x2e); //12.
+    writeToCan(canidMFD,8,0xc6,splitDigitAny(battVolt,2),splitDigitAny(battVolt,1),0x76,0x4a,0x00,0x00,0x01); //45v
+    writeToCan(canidMFD,4,0xc7,0x00,0x00,0x00,0x00,0x00,0x00,0x00);
+    blnUpdateCanMFD = false;
+  }
+
+/*
+  if (blnUpdateCanMFD) {
+    writeToCan(canidMFD,8,0x4C,0x50,0x0A,0x05,0x00,0x07,0x00,0x00); //showing music logo
+    writeToCan(canidMFD,8,0x80,0x35,0x4c,0x55,0x1a,0x56,0x6f,0x6c);
+    writeToCan(canidMFD,8,0xc0,0x3a,0x20,splitDigit(lvlVol,0),splitDigit(lvlVol,1),0x20,0x53,0x75);
+    writeToCan(canidMFD,8,0xc1,0x62,0x3a,0x20,splitDigit(lvlSub,0),splitDigit(lvlSub,1),0x20,0x44);
+    writeToCan(canidMFD,8,0xc2,0x69,0x67,0x49,0x6e,0x3a,0x20,0x4f);
+    if (blnSwitch) {
+      writeToCan(canidMFD,8,0xc3,0x6e,0x20,0x48,0x00,0x00,0x0a,0x48);
+    } else {
+      writeToCan(canidMFD,8,0xc3,0x66,0x66,0x48,0x00,0x00,0x0a,0x48);
+    }
+    writeToCan(canidMFD,8,0xc4,0x65,0x6c,0x69,0x78,0x20,0x4c,0x69);
+    //writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,0x76,0x2e,0x36); //v.6
+    //batteryVoltage
+    //writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,splitDigit(batteryVoltage,0),splitDigit(batteryVoltage,1),0x76); //12v
+    writeToCan(canidMFD,8,0xc5,0x74,0x65,0x49,0x03,splitDigitAny(battVolt,4),splitDigitAny(battVolt,3),0x76); //12v
+    
+    writeToCan(canidMFD,8,0xc6,0x4a,0x00,0x00,0x01,0x00,0x00,0x00);
+    blnUpdateCanMFD = false;
+  }
+*/
   if ((timeCurrent-timeFrontCamPressed)>500) {
     if (digitalRead(pinCamButton) == LOW) {  
       tftSerialPrint("cam button pressed ");
@@ -537,8 +624,8 @@ void loop(){
       }
       if (arrMenuOled[intMenuItem] == menuOledSaveDefaults) {
           //Serial.println("Save all defaults");
-          EEPROM.update(eepromAddrBlnBass, blnBass);
-          EEPROM.update(eepromAddrLvlBass, lvlBass);
+          EEPROM.update(eepromAddrblnSub, blnSub);
+          EEPROM.update(eepromAddrlvlSub, lvlSub);
           EEPROM.update(eepromAddrLvlVol, lvlVol);
           EEPROM.update(eepromAddrVolBy, bytVolBy);
           blnMenu = false;
@@ -606,7 +693,7 @@ void loop(){
             blnMenuButton = true;
           } else {
             //blnRefreshDisplay = true;
-            blnBass = !blnBass;
+            blnSub = !blnSub;
           }
         } else { //long enc button press
           blnMenu = true;
@@ -614,7 +701,7 @@ void loop(){
           timeMenuEnabled = timeCurrent;
         }
       } else { //double click
-        blnDigitalInput = !blnDigitalInput;
+        blnSwitch = !blnSwitch;
       }
       buttonPressedCount = 0;
   }
@@ -625,12 +712,15 @@ void loop(){
     if (CAN_MSGAVAIL == CAN.checkReceive()) {
       CAN.readMsgBuf(&len, buf);
       canId = CAN.getCanId();
-        if (canId == 0x5bf) { //wheelbuttons
+        if (canId == canidWheelButton) { //wheelbuttons
           if (buf[0] == 0x0c) {
               //tftSerialPrint("DIG IN by CAN");
-              blnDigitalInput = !blnDigitalInput;
+              blnSwitch = !blnSwitch;
           }
         } 
+        if (canId == canidVoltage) { //voltage //0x0663 bit5 XX/20+5 -voltage
+          battVolt = buf[5]*5+500;
+        }
         if (canId == 0x3dc) { //gear selector
           bytSnifCANGear = buf[5];
           if (bytSnifCANGear != bytSnifCANGearOld) {
@@ -658,16 +748,35 @@ void loop(){
             blnCamDisplayOn=0;
           }
         }
-        if (canId == 0x17333110) {  //vol control
+        if (canId == canidVol) {  //vol control
+              if (blnSnifCANVol) {
+                tftSerialPrint("canidVol ",false);
+                tftSerialPrint(String(buf[0],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[1],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[2],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[3],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[4],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[5],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[6],HEX),false);
+                tftSerialPrint(" ",false);
+                tftSerialPrint(String(buf[7],HEX),true);
+              }
+
           if (buf[1] == 0x6F) { //vol can 1
             bytSnifCANVol = buf[5];
             if (bytSnifCANVolOld != bytSnifCANVol) {
-              if (blnSnifCANVol) {
-                tftSerialPrint("canid 0x17222110 buf[1]=0x6f buf[0]=",false);
-                tftSerialPrint(String(buf[0],HEX),false);
-                tftSerialPrint(" buf[5]=",false);
-                tftSerialPrint(String(bytSnifCANVol,HEX),true);
-              }
+//              if (blnSnifCANVol) {
+//                tftSerialPrint("canid canidVol buf[1]=0x6f buf[0]=",false);
+//                tftSerialPrint(String(buf[0],HEX),false);
+//                tftSerialPrint(" buf[5]=",false);
+//                tftSerialPrint(String(bytSnifCANVol,HEX),true);
+//              }
               if ((buf[0] == 0x4C)||(buf[0] == 0x3C)) {
                 lvlVolCan=bytSnifCANVol; //Vol   
               }
@@ -677,15 +786,15 @@ void loop(){
           if ((buf[1] == 0x52)&&(buf[0] == 0x3C)) { //vol can 2
             bytSnifCANVol2 = buf[2];
             if (bytSnifCANVol2 != bytSnifCANVolOld2) {
-              if (blnSnifCANVol) {
-                tftSerialPrint("canid 0x17222110 buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
-                tftSerialPrint(String(bytSnifCANVol2,HEX),true);
-              }
+//              if (blnSnifCANVol) {
+//                tftSerialPrint("canid canidVol buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
+//                tftSerialPrint(String(bytSnifCANVol2,HEX),true);
+//              }
               lvlVolCan=bytSnifCANVol2; //Vol  
               bytSnifCANVolOld2 = bytSnifCANVol2;
             }
           }
-          if ((!blnDigitalInput)&&(!blnVolByEnc)) {
+          if ((!blnSwitch)&&(!blnVolByEnc)) {
             if ((timeCurrent-timeDigitalInputChanged)>delayBeforeEnableVolByCan) {
               lvlTemp = lvlVolCan*8.5;
               if (lvlTemp != lvlVol) {
@@ -744,8 +853,8 @@ void loop(){
       timeMenuEnabled = timeCurrent;
     } else {
       lvlTemp = lvlTemp*lvlStep;
-      if (blnBass) {
-        lvlBass = checkVolLevel(lvlBass + lvlTemp);
+      if (blnSub) {
+        lvlSub = checkVolLevel(lvlSub + lvlTemp);
       } else {
         lvlVol = checkVolLevel(lvlVol + lvlTemp);
       }
@@ -759,6 +868,20 @@ byte checkVolLevel(int lvl) {
       //if (lvl > 94) return 96;      
       return lvl;
 }
+
+#if CANEnabled == 1
+  byte splitDigitAny(unsigned int lvl, byte pos) {
+    unsigned int mult=1;
+    for (i=1;i<pos;i=i+1){
+      mult = mult * 10;
+    }
+    if (lvl < mult) {
+      return 0x20;
+    } else {
+      return 0x30+((lvl / mult) % 10);
+    }
+  }
+#endif
 
 byte checkMenuItems(int i) {
       if (i < 0) return 0;
