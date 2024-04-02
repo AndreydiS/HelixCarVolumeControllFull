@@ -1,17 +1,14 @@
-/*ver 0.924
-JAN2024 updated vol sniffer. added code to write control status to MFD
-bug fixes
-canidMFD = 0x17333111
-*/
-#include <EEPROM.h>
-#include <SPI.h>
-#include <mcp_can.h>
-#include <Adafruit_ST7789.h>
-#include <Adafruit_GFX.h>
+#define softVer 1.0
+
+//JAN2024 updated vol sniffer. added code to write control status to MFD bug fixes canidMFD = 0x17333111
+//APR2024 reading voltage level and showing on MFD
 
 #define CANEnabled 1 //0-No CAN module installed 1-CAN installed
 
-#define canidMFD 0x17333111
+#include <EEPROM.h>
+#include <SPI.h>
+#include <Adafruit_ST7789.h>
+#include <Adafruit_GFX.h>
 
 #define ST77XX_GRAY 0x38e7 //00111 000111 00111
 #define ST77XX_LGRAY 0x79EF //01111 011111 01111
@@ -31,16 +28,32 @@ canidMFD = 0x17333111
 #define pinDigital 8   //Digital out switch
 #define pinCamButton 7 //cam change input button
 #define pinCamRelay 6  //cam change relay
-
 //GLOBAL PIN DEFINITION
 
-char strLvl[8];
+#if CANEnabled == 1
+  #include <mcp_can.h>
+  #define intCANShieldInitRetry 3
+  #define canidVoltage 0x663
+  #define canidMFD 0x17333111
+  #define canidVol 0x17333110
+  #define canidWheelButton 0x5bf
+
+  bool blnCANinitFailed=false;
+  bool blnUpdateCanMFD = false;
+  MCP_CAN CAN(pinCANShield);
+  INT32U canId = 0x0;
+  byte len = 0;
+  byte buf[8];
+  byte lvlVolCan=0x0e;
+#endif
+
+
+//char strLvl[8];
 volatile byte lvlVol = 0x73; //start volume level
 volatile byte lvlSub = 0xC9; //start volume level
 byte lvlVolOld = 0x0;
 byte lvlSubOld = 0x0;
 volatile int lvlTemp = 0x00;
-byte lvlVolCan=0x0e;
 
 byte i = 0;
 byte j = 0;
@@ -65,12 +78,9 @@ unsigned long timeButtonPressed = 0;
 unsigned long timeButtonPressedLastTime = 0;
 unsigned long timeButtonPressedDuration = 0;
 
-
-//unsigned long timeVolEnabled = 0;
 byte buttonPressedCount=0;
 byte intGear=0;
 byte intGearPrev=0;
-bool blnCANinitFailed=false;
 
 char strInSerial[16];
 char inChar = -1;
@@ -199,16 +209,7 @@ uint16_t colorVolBar = ST77XX_YELLOW;
 uint16_t colorBassBar = ST77XX_YELLOW;
 float fltBarWidthToVolLvl = widthVolBar/256.0;
 byte intVolBarWidth = 0;
-//float batteryVoltage =0;
 unsigned int battVolt = 0;
-
-
-INT32U canId = 0x0;
-//unsigned char len = 0;
-byte len = 0;
-//unsigned char buf[8];
-byte buf[8];
-MCP_CAN CAN(pinCANShield);
 
 bool blnSnifCANGear = false;
 bool blnSnifCANVol = false;
@@ -218,9 +219,6 @@ byte bytSnifCANVol = 0x0;
 byte bytSnifCANVolOld = 0x0;
 byte bytSnifCANVol2 = 0x0;
 byte bytSnifCANVolOld2 = 0x0;
-
-bool blnUpdateCanMFD = false;
-
 
 byte bytVisualType=0;
 
@@ -291,10 +289,10 @@ void setup() {
     tftSerialPrint("CAN OK");
     delay(100);
     CAN.init_Mask(1, 1, 0x1fffffff);
-    CAN.init_Filt(2, 1, 0x17333110); //volume from head unit
+    CAN.init_Filt(2, 1, canidVol); //volume from head unit
     CAN.init_Filt(3, 1, 0x17330b00); //cam display?
     //CAN.init_Mask(0, 0, 0x07ff); 
-    //CAN.init_Filt(0, 0, 0x05bf); //wheelbuttons
+    //CAN.init_Filt(0, 0, canidWheelButton); //wheelbuttons
     //CAN.init_Filt(1, 0, 0x03dc);  //gears selector
     CAN.init_Mask(0, 0, 0x0000); 
     //0x0663 bit5 XX/20+5 -voltage
@@ -714,14 +712,13 @@ C7,00,00,00,
     if (CAN_MSGAVAIL == CAN.checkReceive()) {
       CAN.readMsgBuf(&len, buf);
       canId = CAN.getCanId();
-        if (canId == 0x5bf) { //wheelbuttons
+        if (canId == canidWheelButton) { //wheelbuttons
           if (buf[0] == 0x0c) {
               //tftSerialPrint("DIG IN by CAN");
               blnSwitch = !blnSwitch;
           }
         } 
-        if (canId == 0x663) { //voltage //0x0663 bit5 XX/20+5 -voltage
-          //batteryVoltage = (float)buf[5]/20+5;    
+        if (canId == canidVoltage) { //voltage //0x0663 bit5 XX/20+5 -voltage
           battVolt = buf[5]*5+500;
         }
         if (canId == 0x3dc) { //gear selector
@@ -751,9 +748,9 @@ C7,00,00,00,
             blnCamDisplayOn=0;
           }
         }
-        if (canId == 0x17333110) {  //vol control
+        if (canId == canidVol) {  //vol control
               if (blnSnifCANVol) {
-                tftSerialPrint("0x17333110 ",false);
+                tftSerialPrint("canidVol ",false);
                 tftSerialPrint(String(buf[0],HEX),false);
                 tftSerialPrint(" ",false);
                 tftSerialPrint(String(buf[1],HEX),false);
@@ -775,7 +772,7 @@ C7,00,00,00,
             bytSnifCANVol = buf[5];
             if (bytSnifCANVolOld != bytSnifCANVol) {
 //              if (blnSnifCANVol) {
-//                tftSerialPrint("canid 0x17333110 buf[1]=0x6f buf[0]=",false);
+//                tftSerialPrint("canid canidVol buf[1]=0x6f buf[0]=",false);
 //                tftSerialPrint(String(buf[0],HEX),false);
 //                tftSerialPrint(" buf[5]=",false);
 //                tftSerialPrint(String(bytSnifCANVol,HEX),true);
@@ -790,7 +787,7 @@ C7,00,00,00,
             bytSnifCANVol2 = buf[2];
             if (bytSnifCANVol2 != bytSnifCANVolOld2) {
 //              if (blnSnifCANVol) {
-//                tftSerialPrint("canid 0x17333110 buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
+//                tftSerialPrint("canid canidVol buf[0]=0x3C buf[1]=0x52 buf[2]=",false);
 //                tftSerialPrint(String(bytSnifCANVol2,HEX),true);
 //              }
               lvlVolCan=bytSnifCANVol2; //Vol  
